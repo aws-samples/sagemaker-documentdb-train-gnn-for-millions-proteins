@@ -3,7 +3,6 @@ import json
 import os
 import math
 import random
-import urllib
 from datetime import datetime
 
 from pymongo import MongoClient
@@ -94,7 +93,7 @@ class ProteinDataset(data.IterableDataset):
         self.db_name = db_name
         self.collection_name = collection_name
 
-#         with MongoClient(self.db_uri) as client:
+        #         with MongoClient(self.db_uri) as client:
         client = MongoClient(self.db_uri, connect=False)
         collection = client[self.db_name][self.collection_name]
         # pre-fetch the metadata as docs from DocumentDB
@@ -331,8 +330,11 @@ def match_by_split(split):
 
 def main(args):
     args = setup(args)
-    uri = "mongodb://{}:{}@{}:27017/?tls=true&tlsCAFile=rds-combined-ca-bundle.pem&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false".format(
-        args["db_username"], args["db_password"], args["db_host"]
+    uri = "mongodb://{}:{}@{}:{}/?tls=true&tlsCAFile=rds-combined-ca-bundle.pem&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false".format(
+        args["db_username"],
+        args["db_password"],
+        args["db_host"],
+        args["db_port"],
     )
 
     project = {"y": "$is_AF"}
@@ -351,19 +353,19 @@ def main(args):
     ]
     train_loader = data.DataLoader(
         BufferedShuffleDataset(datasets[0], buffer_size=256),
-        batch_size=args.batch_size,
+        batch_size=args["batch_size"],
         collate_fn=collate_protein_graphs,
         num_workers=8,
     )
 
     valid_loader = data.DataLoader(
         datasets[1],
-        batch_size=args.batch_size,
+        batch_size=args["batch_size"],
         collate_fn=collate_protein_graphs,
     )
     test_loader = data.DataLoader(
         datasets[2],
-        batch_size=args.batch_size,
+        batch_size=args["batch_size"],
         collate_fn=collate_protein_graphs,
     )
 
@@ -417,6 +419,11 @@ def parse_args():
         help="Host of DocumentDB",
     )
     parser.add_argument(
+        "--db-port",
+        type=str,
+        help="Port of DocumentDB",
+    )
+    parser.add_argument(
         "--db-username",
         type=str,
         help="Username of DocumentDB",
@@ -436,17 +443,7 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    print('os.getcwd():', os.getcwd())
-    script_dir = os.path.dirname(os.path.realpath(__file__))
-    print('script dir:', script_dir)
-    print('in script dir:', os.listdir(script_dir))
     args = parse_args()
     print(args)
-    # Download the Amazon DocumentDB Certificate Authority (CA) certificate
-    # required to authenticate to your cluster
-#     urllib.request.urlretrieve(
-#         "https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem",
-#         "/opt/ml/code/rds-ca-bundle.pem",
-#     )
     args = load_sagemaker_config(args)
     main(args)
