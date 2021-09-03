@@ -93,7 +93,6 @@ class ProteinDataset(data.IterableDataset):
         self.db_name = db_name
         self.collection_name = collection_name
 
-        #         with MongoClient(self.db_uri) as client:
         client = MongoClient(self.db_uri, connect=False)
         collection = client[self.db_name][self.collection_name]
         # pre-fetch the metadata as docs from DocumentDB
