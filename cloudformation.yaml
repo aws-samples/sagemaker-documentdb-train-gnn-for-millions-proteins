@@ -3,7 +3,7 @@
 
 ---
 AWSTemplateFormatVersion: "2010-09-09"
-Description: This stack deploys the infrastructure used in the blog post, "Using Amazon SageMaker to Query and Write into Amazon DocumentDB".
+Description: This stack deploys the infrastructure used in the blog post, "Training graph neural nets for millions of proteins on Amazon SageMaker and DocumentDB".
 
 Parameters:
   DocDBUsername:
@@ -38,6 +38,7 @@ Parameters:
       - ml.m5.xlarge
       - ml.t3.2xlarge
       - ml.t3.xlarge
+      - ml.p3.2xlarge
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -68,6 +69,8 @@ Mappings:
       CIDR: "10.0.101.0/24"
     PrivateThree:
       CIDR: "10.0.102.0/24"
+    NATSubnet:
+      CIDR: "10.0.1.0/24"
 
 Resources:
   # Networking
@@ -165,6 +168,51 @@ Resources:
       SubnetId: !Ref PublicSubnetOne
       RouteTableId: !Ref PublicRouteTable
 
+  # Add a NAT gateway to the public subnet
+  NAT:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIPAddress.AllocationId
+      SubnetId: !Ref PublicSubnetOne
+      ConnectivityType: public
+  ElasticIPAddress:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  # Route table for NAT
+  NATRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-NATRouteTable
+  NATRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachement
+    Properties:
+      RouteTableId: !Ref NATRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NAT
+  # Subnet of NAT associating to the NAT's route table
+  NATSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: { Ref: "AWS::Region" }
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ["SubnetConfig", "NATSubnet", "CIDR"]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-NATSubnet
+  NATSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref NATSubnet
+      RouteTableId: !Ref NATRouteTable
   # DocumentDB
   DocumentDBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -269,6 +317,10 @@ Resources:
                 - "sagemaker.amazonaws.com"
             Action:
               - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonVPCReadOnlyAccess
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
       Description: SageMaker notebook instance role granting read access to Secrets Manager
       RoleName: !Sub ${AWS::StackName}-SageMakerRoleName
       Tags:
@@ -314,13 +366,11 @@ Resources:
             Fn::Base64: !Sub |
               #!/bin/bash
               sudo -u ec2-user -i <<'EOF'
-              source /home/ec2-user/anaconda3/bin/activate python3
+              source /home/ec2-user/anaconda3/bin/activate pytorch_latest_p36
               pip install --upgrade pymongo
-              pip install --upgrade xgboost
               source /home/ec2-user/anaconda3/bin/deactivate
               cd /home/ec2-user/SageMaker
               wget https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem
-              wget https://raw.githubusercontent.com/aws-samples/documentdb-sagemaker-example/main/script.ipynb
               EOF
 
 Outputs:
@@ -336,6 +386,8 @@ Outputs:
     Value: !Ref PrivateSubnetThree
   PublicSubnetOne:
     Value: !Ref PublicSubnetOne
+  NATSubnet:
+    Value: !Ref NATSubnet
   DocumentDBClusterName:
     Value: !Ref DocumentDBCluster
   DocumentDBCluster:
