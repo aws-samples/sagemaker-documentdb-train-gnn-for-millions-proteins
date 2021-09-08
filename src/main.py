@@ -7,7 +7,7 @@ from datetime import datetime
 
 from pymongo import MongoClient
 import dgl
-from dgl.nn import GraphConv
+from dgl.nn import GraphConv, GlobalAttentionPooling
 import numpy as np
 import torch
 import torch.nn as nn
@@ -61,14 +61,14 @@ def collate_protein_graphs(samples):
     return bg, torch.tensor(targets).unsqueeze(1).to(torch.float32)
 
 
-def _convert_to_graph(protein):
+def convert_to_graph(protein, k=3):
     """
-    Convert a protein (dict) to a dgl graph
+    Convert a protein (dict) to a dgl graph using kNN.
     """
     coords = torch.tensor(protein["coords"])
     X_ca = coords[:, 1]
     # construct knn graph from C-alpha coordinates
-    g = dgl.knn_graph(X_ca, k=2)
+    g = dgl.knn_graph(X_ca, k=k)
     seq = protein["seq"]
     node_features = torch.tensor([d1_to_index[residue] for residue in seq])
     node_features = F.one_hot(node_features, num_classes=len(d1_to_index)).to(
@@ -84,14 +84,21 @@ class ProteinDataset(data.IterableDataset):
     """
     An iterable-style dataset for proteins in DocumentDB
     Args:
-        - pipeline: an aggregation pipeline to retrieve data from DocumentDB
+        pipeline: an aggregation pipeline to retrieve data from DocumentDB
+        db_uri: URI of the DocumentDB
+        db_name: name of the database
+        collection_name: name of the collection
+        k: k used for kNN when creating a graph from atomic coordinates
     """
 
-    def __init__(self, pipeline, db_uri="", db_name="", collection_name=""):
+    def __init__(
+        self, pipeline, db_uri="", db_name="", collection_name="", k=3
+    ):
 
         self.db_uri = db_uri
         self.db_name = db_name
         self.collection_name = collection_name
+        self.k = k
 
         client = MongoClient(self.db_uri, connect=False)
         collection = client[self.db_name][self.collection_name]
@@ -102,9 +109,8 @@ class ProteinDataset(data.IterableDataset):
 
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
-        if (
-            worker_info is None
-        ):  # single-process data loading, return the full iterator
+        if worker_info is None:
+            # single-process data loading, return the full iterator
             protein_ids = [doc["_id"] for doc in self.docs]
 
         else:  # in a worker process
@@ -130,7 +136,10 @@ class ProteinDataset(data.IterableDataset):
                 projection={"coords": True, "seq": True},
             )
             return (
-                (_convert_to_graph(protein), self.labels[protein["_id"]])
+                (
+                    convert_to_graph(protein, k=self.k),
+                    self.labels[protein["_id"]],
+                )
                 for protein in cur
             )
 
@@ -251,17 +260,47 @@ class Meter(object):
 
 
 class GCN(nn.Module):
+    """A two layer Graph Conv net with Global Attention Pooling over the
+    nodes.
+    Args:
+        in_feats: int, dim of input node features
+        h_feats: int, dim of hidden layers
+        num_classes: int, number of output units
+    """
+
     def __init__(self, in_feats, h_feats, num_classes):
         super(GCN, self).__init__()
         self.conv1 = GraphConv(in_feats, h_feats)
-        self.conv2 = GraphConv(h_feats, num_classes)
+        self.conv2 = GraphConv(h_feats, h_feats)
+        # the gate layer that maps node feature to outputs
+        self.gate_nn = nn.Linear(h_feats, num_classes)
+        self.gap = GlobalAttentionPooling(self.gate_nn)
+        # the output layer making predictions
+        self.output = nn.Linear(h_feats, num_classes)
 
-    def forward(self, g, in_feat):
+    def _conv_forward(self, g):
+        """forward pass through the GraphConv layers"""
+        in_feat = g.ndata["h"]
         h = self.conv1(g, in_feat)
         h = F.relu(h)
         h = self.conv2(g, h)
-        g.ndata["h"] = h
-        return dgl.mean_nodes(g, "h")
+        h = F.relu(h)
+        return h
+
+    def forward(self, g):
+        h = self._conv_forward(g)
+        h = self.gap(g, h)
+        return self.output(h)
+
+    def attention_scores(self, g):
+        """Calculate attention scores"""
+        h = self._conv_forward(g)
+        with g.local_scope():
+            gate = self.gap.gate_nn(h)
+            g.ndata["gate"] = gate
+            gate = dgl.softmax_nodes(g, "gate")
+            g.ndata.pop("gate")
+            return gate
 
 
 def run_a_train_epoch(args, epoch, model, data_loader, optimizer):
@@ -271,7 +310,7 @@ def run_a_train_epoch(args, epoch, model, data_loader, optimizer):
         bg, labels = batch_data
         bg = bg.to(args["device"])
         labels = labels.to(args["device"])
-        logits = model(bg, bg.ndata["h"])
+        logits = model(bg)
         # Mask non-existing labels
         loss = F.binary_cross_entropy_with_logits(logits, labels)
         optimizer.zero_grad()
@@ -302,7 +341,7 @@ def run_an_eval_epoch(args, model, data_loader):
             bg, labels = batch_data
             bg = bg.to(args["device"])
             labels = labels.to(args["device"])
-            logits = model(bg, bg.ndata["h"])
+            logits = model(bg)
             eval_meter.update(logits, labels)
     return np.mean(eval_meter.roc_auc_score())
 
@@ -347,6 +386,7 @@ def main(args):
             db_uri=uri,
             db_name="proteins",
             collection_name="proteins",
+            k=args["knn"],
         )
         for split in ("train", "valid", "test")
     ]
@@ -411,6 +451,12 @@ def parse_args():
         type=int,
         default=10,
         help="Maximum number of training epochs",
+    )
+    parser.add_argument(
+        "--knn",
+        type=int,
+        default=3,
+        help="k used in kNN when creating protein graphs",
     )
     parser.add_argument(
         "--db-host",
