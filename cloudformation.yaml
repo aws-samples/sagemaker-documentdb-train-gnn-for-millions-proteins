@@ -93,7 +93,7 @@ Resources:
           - Fn::GetAZs: { Ref: "AWS::Region" }
       VpcId: !Ref VPC
       CidrBlock: !FindInMap ["SubnetConfig", "PublicOne", "CIDR"]
-      MapPublicIpOnLaunch: true
+      MapPublicIpOnLaunch: false
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-PublicOne
@@ -204,7 +204,7 @@ Resources:
           - Fn::GetAZs: { Ref: "AWS::Region" }
       VpcId: !Ref VPC
       CidrBlock: !FindInMap ["SubnetConfig", "NATSubnet", "CIDR"]
-      MapPublicIpOnLaunch: true
+      MapPublicIpOnLaunch: false
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-NATSubnet
@@ -225,6 +225,11 @@ Resources:
           CidrIp: 10.0.0.0/16
           FromPort: 27017
           ToPort: 27017
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: 0
+          ToPort: 65535
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-SG-DocumentDB
