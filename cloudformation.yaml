@@ -220,11 +220,6 @@ Resources:
       GroupDescription: Amazon DocumentDB Security Group
       GroupName: !Sub ${AWS::StackName}-SG-DocumentDB
       VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          CidrIp: 10.0.0.0/16
-          FromPort: 27017
-          ToPort: 27017
       SecurityGroupEgress:
         - IpProtocol: tcp
           CidrIp: 0.0.0.0/0
@@ -233,6 +228,14 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-SG-DocumentDB
+  DocumentDBSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      SourceSecurityGroupId: !Ref DocumentDBSecurityGroup
+      IpProtocol: tcp
+      FromPort: 27017
+      ToPort: 27017
+      GroupId: !Ref DocumentDBSecurityGroup
 
   DocumentDBSubnetGroup:
     Type: AWS::DocDB::DBSubnetGroup
@@ -255,6 +258,8 @@ Resources:
       MasterUserPassword: !Ref DocDBPassword
       DBSubnetGroupName: !Ref DocumentDBSubnetGroup
       StorageEncrypted: yes
+      EnableCloudwatchLogsExports:
+        - audit
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-DocumentDB
@@ -368,7 +373,7 @@ Resources:
     Properties:
       OnStart:
         - Content:
-            Fn::Base64: !Sub |
+            Fn::Base64: |
               #!/bin/bash
               sudo -u ec2-user -i <<'EOF'
               source /home/ec2-user/anaconda3/bin/activate pytorch_latest_p36
