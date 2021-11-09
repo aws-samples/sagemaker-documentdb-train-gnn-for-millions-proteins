@@ -1,5 +1,8 @@
-# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: MIT-0
+# xpdb.py -- extensions to Bio.PDB
+# (c) 2009 Oliver Beckstein
+# Modifications (c) Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Released under the same license as Biopython.
+# See http://biopython.org/wiki/Reading_large_PDB_files
 
 """
 PDB parsers for large files with Biopython.
