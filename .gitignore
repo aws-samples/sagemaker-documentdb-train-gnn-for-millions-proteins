@@ -1,6 +1,7 @@
 data/
 DocumentDB_secrets.json
 *.pem
+.DS_Store
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -40,6 +40,11 @@ Parameters:
       - ml.t3.xlarge
       - ml.p3.2xlarge
 
+  SageMakerInstanceVolumeSize:
+    Type: Number
+    Description: Volume Size (in GB) for the SageMaker Notebook instance
+    Default: 5
+
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -365,7 +370,7 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-SageMakerInstance
-      VolumeSizeInGB: 5
+      VolumeSizeInGB: !Ref SageMakerInstanceVolumeSize
     DependsOn: DocumentDBCluster
 
   SageMakerNotebookInstanceLifecycleConfig:
