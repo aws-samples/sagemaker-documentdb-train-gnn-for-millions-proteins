@@ -5,13 +5,16 @@
 Helpers for parsing protein structure files and generating contact maps.
 """
 import gzip
+from io import StringIO
+from typing import Union
 import numpy as np
 import pandas as pd
-from io import StringIO
+
 from Bio.PDB.Polypeptide import three_to_one, is_aa
+from Bio.PDB import PDBParser, MMCIFParser, Structure, Chain, Residue
 
 
-def gunzip_to_ram(gzip_file_path):
+def gunzip_to_ram(gzip_file_path: str) -> StringIO:
     """
     gunzip a gzip file and decode it to a io.StringIO object.
     """
@@ -24,7 +27,9 @@ def gunzip_to_ram(gzip_file_path):
     return temp_fp
 
 
-def _parse_structure(parser, name, file_path):
+def _parse_structure(
+    parser: Union[PDBParser, MMCIFParser], name: str, file_path: str
+) -> Structure:
     """Parse a .pdb or .cif file into a structure object.
     The file can be gzipped."""
     if pd.isnull(file_path):
@@ -39,7 +44,9 @@ def _parse_structure(parser, name, file_path):
 parse_pdb_structure = _parse_structure  # for backward compatiblity
 
 
-def parse_structure(pdb_parser, cif_parser, name, file_path):
+def parse_structure(
+    pdb_parser: PDBParser, cif_parser: MMCIFParser, name: str, file_path: str
+) -> Structure:
     """Parse a .pdb file or .cif file into a structure object.
     The file can be gzipped."""
     if file_path.rstrip(".gz").endswith("pdb"):
@@ -48,14 +55,14 @@ def parse_structure(pdb_parser, cif_parser, name, file_path):
         return _parse_structure(cif_parser, name, file_path)
 
 
-def three_to_one_standard(res):
+def three_to_one_standard(res: Residue) -> str:
     """Encode non-standard AA to X."""
     if not is_aa(res, standard=True):
         return "X"
     return three_to_one(res)
 
 
-def is_aa_by_target_atoms(res):
+def is_aa_by_target_atoms(res: Residue) -> bool:
     """Tell if a Residue object is AA"""
     target_atoms = ["N", "CA", "C", "O"]
     for atom in target_atoms:
@@ -66,7 +73,9 @@ def is_aa_by_target_atoms(res):
     return True
 
 
-def get_atom_coords(residue, target_atoms=["N", "CA", "C", "O"]):
+def get_atom_coords(
+    residue: Residue, target_atoms: list[str] = ["N", "CA", "C", "O"]
+) -> np.ndarray:
     """Extract the coordinates of the target_atoms from an amino acid residue.
     Handles exception where residue doesn't contain certain atoms
     """
@@ -80,9 +89,13 @@ def get_atom_coords(residue, target_atoms=["N", "CA", "C", "O"]):
     return np.asarray(atom_coords)
 
 
-def chain_to_coords(chain, target_atoms=["N", "CA", "C", "O"], name=""):
-    """Convert a protein chain in a PDB file to coordinates of target atoms from all
-    residues"""
+def chain_to_coords(
+    chain: Chain,
+    target_atoms: list[str] = ["N", "CA", "C", "O"],
+    name: str = "",
+) -> dict:
+    """Convert a protein chain in a PDB file to coordinates of target atoms
+    from all residues"""
     output = {}
     # get AA sequence in the pdb structure
     pdb_seq = "".join(
@@ -109,7 +122,11 @@ def chain_to_coords(chain, target_atoms=["N", "CA", "C", "O"], name=""):
     return output
 
 
-def parse_pdb_file_to_json_record(pdb_parser, pdb_file_path, name=""):
+def parse_pdb_file_to_json_record(
+    pdb_parser: Union[PDBParser, MMCIFParser],
+    pdb_file_path: str,
+    name: str = "",
+) -> dict:
     """Parse a protein structure file (.pdb) to extract all the chains
     to json records."""
 

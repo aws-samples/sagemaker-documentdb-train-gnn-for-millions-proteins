@@ -4,6 +4,8 @@ import os
 import math
 import random
 from datetime import datetime
+from typing import Optional
+from collections.abc import Iterator
 
 from pymongo import MongoClient
 import dgl
@@ -42,7 +44,7 @@ d1_to_index = {
 }
 
 
-def setup(args, seed=0):
+def setup(args: dict, seed: int = 0) -> dict:
     args["device"] = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Set random seed
@@ -54,14 +56,14 @@ def setup(args, seed=0):
     return args
 
 
-def collate_protein_graphs(samples):
+def collate_protein_graphs(samples: list) -> tuple[dgl.DGLGraph, torch.Tensor]:
     """Batching a list of datapoints for dataloader."""
     graphs, targets = map(list, zip(*samples))
     bg = dgl.batch(graphs)
     return bg, torch.tensor(targets).unsqueeze(1).to(torch.float32)
 
 
-def convert_to_graph(protein, k=3):
+def convert_to_graph(protein: dict, k: int = 3) -> dgl.DGLGraph:
     """
     Convert a protein (dict) to a dgl graph using kNN.
     """
@@ -92,8 +94,13 @@ class ProteinDataset(data.IterableDataset):
     """
 
     def __init__(
-        self, pipeline, db_uri="", db_name="", collection_name="", k=3
-    ):
+        self,
+        pipeline: list,
+        db_uri: str = "",
+        db_name: str = "",
+        collection_name: str = "",
+        k: int = 3,
+    ) -> None:
 
         self.db_uri = db_uri
         self.db_name = db_name
@@ -107,7 +114,7 @@ class ProteinDataset(data.IterableDataset):
         # mapping document '_id' to label
         self.labels = {doc["_id"]: doc["y"] for doc in self.docs}
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[dict]:
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:
             # single-process data loading, return the full iterator
@@ -143,7 +150,7 @@ class ProteinDataset(data.IterableDataset):
                 for protein in cur
             )
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.docs)
 
 
@@ -163,7 +170,7 @@ class BufferedShuffleDataset(data.IterableDataset):
         self.dataset = dataset
         self.buffer_size = buffer_size
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         buf = []
         for x in self.dataset:
             if len(buf) == self.buffer_size:
@@ -178,7 +185,7 @@ class BufferedShuffleDataset(data.IterableDataset):
 
 
 class EarlyStopper(object):
-    def __init__(self, patience, filename=None):
+    def __init__(self, patience: int, filename: Optional[str] = None) -> None:
         if filename is None:
             # Name checkpoint based on time
             dt = datetime.now()
@@ -193,15 +200,15 @@ class EarlyStopper(object):
         self.best_score = None
         self.early_stop = False
 
-    def save_checkpoint(self, model):
+    def save_checkpoint(self, model: nn.Module) -> None:
         """Saves model when the metric on the validation set gets improved."""
         torch.save({"model_state_dict": model.state_dict()}, self.filename)
 
-    def load_checkpoint(self, model):
+    def load_checkpoint(self, model: nn.Module) -> nn.Module:
         """Load model saved with early stopping."""
         model.load_state_dict(torch.load(self.filename)["model_state_dict"])
 
-    def step(self, score, model):
+    def step(self, score: float, model: nn.Module) -> bool:
         if (self.best_score is None) or (score > self.best_score):
             self.best_score = score
             self.save_checkpoint(model)
@@ -222,11 +229,11 @@ class Meter(object):
     """Track and summarize model performance on a dataset for
     (multi-label) binary classification."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.y_pred = []
         self.y_true = []
 
-    def update(self, y_pred, y_true):
+    def update(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> None:
         """Update for the result of an iteration
         Parameters
         ----------
@@ -239,7 +246,7 @@ class Meter(object):
         self.y_pred.append(y_pred.detach().cpu())
         self.y_true.append(y_true.detach().cpu())
 
-    def roc_auc_score(self):
+    def roc_auc_score(self) -> list:
         """Compute roc-auc score for each task.
         Returns
         -------
@@ -268,7 +275,7 @@ class GCN(nn.Module):
         num_classes: int, number of output units
     """
 
-    def __init__(self, in_feats, h_feats, num_classes):
+    def __init__(self, in_feats: int, h_feats: int, num_classes: int) -> None:
         super(GCN, self).__init__()
         self.conv1 = GraphConv(in_feats, h_feats)
         self.conv2 = GraphConv(h_feats, h_feats)
@@ -278,7 +285,7 @@ class GCN(nn.Module):
         # the output layer making predictions
         self.output = nn.Linear(h_feats, num_classes)
 
-    def _conv_forward(self, g):
+    def _conv_forward(self, g: dgl.DGLGraph) -> torch.Tensor:
         """forward pass through the GraphConv layers"""
         in_feat = g.ndata["h"]
         h = self.conv1(g, in_feat)
@@ -287,12 +294,12 @@ class GCN(nn.Module):
         h = F.relu(h)
         return h
 
-    def forward(self, g):
+    def forward(self, g: dgl.DGLGraph) -> torch.Tensor:
         h = self._conv_forward(g)
         h = self.gap(g, h)
         return self.output(h)
 
-    def attention_scores(self, g):
+    def attention_scores(self, g: dgl.DGLGraph) -> torch.Tensor:
         """Calculate attention scores"""
         h = self._conv_forward(g)
         with g.local_scope():
@@ -303,7 +310,13 @@ class GCN(nn.Module):
             return gate
 
 
-def run_a_train_epoch(args, epoch, model, data_loader, optimizer):
+def run_a_train_epoch(
+    args: dict,
+    epoch: int,
+    model: nn.Module,
+    data_loader: data.DataLoader,
+    optimizer: torch.optim.Optimizer,
+) -> None:
     model.train()
     train_meter = Meter()
     for batch_id, batch_data in enumerate(data_loader):
@@ -333,7 +346,9 @@ def run_a_train_epoch(args, epoch, model, data_loader, optimizer):
     )
 
 
-def run_an_eval_epoch(args, model, data_loader):
+def run_an_eval_epoch(
+    args: dict, model: nn.Module, data_loader: data.DataLoader
+) -> None:
     model.eval()
     eval_meter = Meter()
     with torch.no_grad():
@@ -346,7 +361,7 @@ def run_an_eval_epoch(args, model, data_loader):
     return np.mean(eval_meter.roc_auc_score())
 
 
-def load_sagemaker_config(args):
+def load_sagemaker_config(args: dict) -> dict:
     file_path = "/opt/ml/input/config/hyperparameters.json"
     if os.path.isfile(file_path):
         with open(file_path, "r") as f:
@@ -362,11 +377,12 @@ def load_sagemaker_config(args):
     return args
 
 
-def match_by_split(split):
+def match_by_split(split: str) -> dict:
+    """Get the $match query by split one of ['train', 'valid', 'test']."""
     return {"$and": [{"is_AF": {"$exists": True}}, {"split": split}]}
 
 
-def main(args):
+def main(args: dict) -> None:
     args = setup(args)
     uri = "mongodb://{}:{}@{}:{}/?tls=true&tlsCAFile=rds-combined-ca-bundle.pem&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false".format(
         args["db_username"],
@@ -424,10 +440,11 @@ def main(args):
         val_score = run_an_eval_epoch(args, model, valid_loader)
         early_stop = stopper.step(val_score, model)
         print(
-            "epoch {:d}/{:d}, validation roc-auc {:.4f}, best validation roc-auc {:.4f}".format(
-                epoch + 1, args["n_epochs"], val_score, stopper.best_score
+            "epoch {:d}/{:d}, validation roc-auc {:.4f}, ".format(
+                epoch + 1, args["n_epochs"], val_score
             )
         )
+        print("best validation roc-auc {:.4f}".format(stopper.best_score))
         if early_stop:
             break
 
@@ -437,7 +454,7 @@ def main(args):
     print("Test score {:.4f}".format(test_score))
 
 
-def parse_args():
+def parse_args() -> dict:
     parser = argparse.ArgumentParser(description="GCN for Tox21")
     parser.add_argument(
         "--batch-size",

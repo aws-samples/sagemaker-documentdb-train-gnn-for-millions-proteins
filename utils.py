@@ -5,8 +5,13 @@ import boto3
 import torch
 
 
-def get_secret(stack_name):
-    """Get DocumentDB credentials stored in Secrets Manager"""
+def get_secret(stack_name: str) -> dict:
+    """Get DocumentDB credentials stored in Secrets Manager.
+    Args:
+        stack_name: str, name of the cloudformation stack
+    Returns:
+        a dict of secrets from Secrets Manager
+    """
 
     # Create a Secrets Manager client
     session = boto3.session.Session()
@@ -21,7 +26,7 @@ def get_secret(stack_name):
     return json.loads(secret)
 
 
-def load_sagemaker_model_artifact(s3_bucket, key):
+def load_sagemaker_model_artifact(s3_bucket: str, key: str) -> dict:
     """Load a PyTorch model artifact (model.tar.gz) produced by a SageMaker
     Training job.
     Args:
