@@ -6,7 +6,7 @@ Helpers for parsing protein structure files and generating contact maps.
 """
 import gzip
 from io import StringIO
-from typing import Union
+from typing import Union, List
 import numpy as np
 import pandas as pd
 
@@ -74,7 +74,7 @@ def is_aa_by_target_atoms(res: Residue) -> bool:
 
 
 def get_atom_coords(
-    residue: Residue, target_atoms: list[str] = ["N", "CA", "C", "O"]
+    residue: Residue, target_atoms: List[str] = ["N", "CA", "C", "O"]
 ) -> np.ndarray:
     """Extract the coordinates of the target_atoms from an amino acid residue.
     Handles exception where residue doesn't contain certain atoms
@@ -91,7 +91,7 @@ def get_atom_coords(
 
 def chain_to_coords(
     chain: Chain,
-    target_atoms: list[str] = ["N", "CA", "C", "O"],
+    target_atoms: List[str] = ["N", "CA", "C", "O"],
     name: str = "",
 ) -> dict:
     """Convert a protein chain in a PDB file to coordinates of target atoms
