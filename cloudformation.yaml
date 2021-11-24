@@ -385,6 +385,8 @@ Resources:
               pip install --upgrade pymongo
               source /home/ec2-user/anaconda3/bin/deactivate
               cd /home/ec2-user/SageMaker
+              git clone https://github.com/aws-samples/sagemaker-documentdb-train-gnn-for-millions-proteins.git
+              cd /home/ec2-user/SageMaker/sagemaker-documentdb-train-gnn-for-millions-proteins
               wget https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem
               EOF
 
