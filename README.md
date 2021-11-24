@@ -1,5 +1,5 @@
-# docdb-sm-protein
-Blog post on training GNN for proteins using SageMaker and DocumentDB
+# sagemaker-documentdb-train-gnn-for-millions-proteins
+Codes for AWS ML blog post entitled "Training graph neural nets for millions of proteins on Amazon SageMaker and DocumentDB (with MongoDB compatibility)"
 
 ## Instructions
 ### 1. Creating resources
