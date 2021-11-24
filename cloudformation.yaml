@@ -1,0 +1,417 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: This stack deploys the infrastructure used in the blog post, "Training graph neural nets for millions of proteins on Amazon SageMaker and DocumentDB".
+
+Parameters:
+  DocDBUsername:
+    Type: String
+    Description: Username for the Amazon DocumentDB cluster
+
+  DocDBPassword:
+    Type: String
+    Description: Password for the Amazon DocumentDB cluster
+    NoEcho: true
+    MinLength: 8
+
+  DocDBInstanceType:
+    Type: String
+    Description: Instance type for DocumentDB cluster
+    Default: db.r5.large
+    AllowedValues:
+      - db.t3.medium
+      - db.r5.large
+      - db.r5.xlarge
+      - db.r5.2xlarge
+      - db.r5.4xlarge
+      - db.r5.12xlarge
+      - db.r5.24xlarge
+
+  SageMakerInstanceType:
+    Type: String
+    Description: Instance type for SageMaker
+    Default: ml.t3.xlarge
+    AllowedValues:
+      - ml.c5.xlarge
+      - ml.m5.xlarge
+      - ml.t3.2xlarge
+      - ml.t3.xlarge
+      - ml.p3.2xlarge
+
+  SageMakerInstanceVolumeSize:
+    Type: Number
+    Description: Volume Size (in GB) for the SageMaker Notebook instance
+    Default: 5
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "DocumentDB Configuration"
+        Parameters:
+          - DocDBInstanceType
+          - DocDBUsername
+          - DocDBPassword
+    ParameterLabels:
+      DocDBInstanceType:
+        default: "Instance type for DocumentDB cluster"
+      DocDBUsername:
+        default: "DocumentDB master username"
+      DocDBPassword:
+        default: "DocumentDB master password"
+
+Mappings:
+  SubnetConfig:
+    VPC:
+      CIDR: "10.0.0.0/16"
+    PublicOne:
+      CIDR: "10.0.0.0/24"
+    PrivateOne:
+      CIDR: "10.0.100.0/24"
+    PrivateTwo:
+      CIDR: "10.0.101.0/24"
+    PrivateThree:
+      CIDR: "10.0.102.0/24"
+    NATSubnet:
+      CIDR: "10.0.1.0/24"
+
+Resources:
+  # Networking
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !FindInMap ["SubnetConfig", "VPC", "CIDR"]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-VPC
+
+  PublicSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: { Ref: "AWS::Region" }
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ["SubnetConfig", "PublicOne", "CIDR"]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicOne
+
+  PrivateSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: { Ref: "AWS::Region" }
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ["SubnetConfig", "PrivateOne", "CIDR"]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateOne
+
+  PrivateSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: { Ref: "AWS::Region" }
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ["SubnetConfig", "PrivateTwo", "CIDR"]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateTwo
+
+  PrivateSubnetThree:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 2
+          - Fn::GetAZs: { Ref: "AWS::Region" }
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ["SubnetConfig", "PrivateThree", "CIDR"]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateThree
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-igw
+  GatewayAttachement:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicRouteTable
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachement
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetOne
+      RouteTableId: !Ref PublicRouteTable
+
+  # Add a NAT gateway to the public subnet
+  NAT:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIPAddress.AllocationId
+      SubnetId: !Ref PublicSubnetOne
+      ConnectivityType: public
+  ElasticIPAddress:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  # Route table for NAT
+  NATRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-NATRouteTable
+  NATRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachement
+    Properties:
+      RouteTableId: !Ref NATRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NAT
+  # Subnet of NAT associating to the NAT's route table
+  NATSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: { Ref: "AWS::Region" }
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ["SubnetConfig", "NATSubnet", "CIDR"]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-NATSubnet
+  NATSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref NATSubnet
+      RouteTableId: !Ref NATRouteTable
+  # DocumentDB
+  DocumentDBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Amazon DocumentDB Security Group
+      GroupName: !Sub ${AWS::StackName}-SG-DocumentDB
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: 0
+          ToPort: 65535
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-SG-DocumentDB
+  DocumentDBSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      SourceSecurityGroupId: !Ref DocumentDBSecurityGroup
+      IpProtocol: tcp
+      FromPort: 27017
+      ToPort: 27017
+      GroupId: !Ref DocumentDBSecurityGroup
+
+  DocumentDBSubnetGroup:
+    Type: AWS::DocDB::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet Group for DocumentDB
+      DBSubnetGroupName: !Sub ${AWS::StackName}-SG-DocumentDB
+      SubnetIds:
+        - !Ref PrivateSubnetOne
+        - !Ref PrivateSubnetTwo
+        - !Ref PrivateSubnetThree
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-SG-DocumentDB
+
+  DocumentDBCluster:
+    Type: AWS::DocDB::DBCluster
+    Properties:
+      DBClusterIdentifier: !Sub ${AWS::StackName}-DocumentDB
+      MasterUsername: !Ref DocDBUsername
+      MasterUserPassword: !Ref DocDBPassword
+      DBSubnetGroupName: !Ref DocumentDBSubnetGroup
+      StorageEncrypted: yes
+      EnableCloudwatchLogsExports:
+        - audit
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-DocumentDB
+      VpcSecurityGroupIds:
+        - !Ref DocumentDBSecurityGroup
+    DependsOn: VPC
+
+  DocumentDBInstanceOne:
+    Type: AWS::DocDB::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DocumentDBCluster
+      DBInstanceClass: !Ref DocDBInstanceType
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-DocumentDBInstance1
+
+  DocumentDBInstanceTwo:
+    Type: AWS::DocDB::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DocumentDBCluster
+      DBInstanceClass: !Ref DocDBInstanceType
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-DocumentDBInstance2
+
+  DocumentDBInstanceThree:
+    Type: AWS::DocDB::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DocumentDBCluster
+      DBInstanceClass: !Ref DocDBInstanceType
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-DocumentDBInstance3
+
+  DocDBSecret:
+    Type: "AWS::SecretsManager::Secret"
+    Properties:
+      Name: !Sub ${AWS::StackName}-DocDBSecret
+      Description: This secret has the credentials for the DocumentDB cluster
+      SecretString: !Join
+        - ""
+        - - '{"username":"'
+          - !Ref DocDBUsername
+          - '","password":"'
+          - !Ref DocDBPassword
+          - '", "ssl": true}'
+
+  SecretDocDBClusterAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DocDBSecret
+      TargetId: !Ref DocumentDBCluster
+      TargetType: AWS::DocDB::DBCluster
+
+  # SageMaker
+  SageMakerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "sagemaker.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonVPCReadOnlyAccess
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+      Description: SageMaker notebook instance role granting read access to Secrets Manager
+      RoleName: !Sub ${AWS::StackName}-SageMakerRoleName
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-SageMakerRoleName
+
+  DocumentDBSecretPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${AWS::StackName}-DocumentDBSecretPolicy
+      Roles:
+        - !Ref SageMakerRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource: !Ref DocDBSecret
+
+  SageMakerNotebookInstance:
+    Type: AWS::SageMaker::NotebookInstance
+    Properties:
+      InstanceType: !Ref SageMakerInstanceType
+      NotebookInstanceName: !Sub ${AWS::StackName}-SageMakerInstance
+      RoleArn: !GetAtt SageMakerRole.Arn
+      DirectInternetAccess: Enabled
+      LifecycleConfigName: !GetAtt SageMakerNotebookInstanceLifecycleConfig.NotebookInstanceLifecycleConfigName
+      SecurityGroupIds:
+        - !Ref DocumentDBSecurityGroup
+      SubnetId: !Ref PublicSubnetOne
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-SageMakerInstance
+      VolumeSizeInGB: !Ref SageMakerInstanceVolumeSize
+    DependsOn: DocumentDBCluster
+
+  SageMakerNotebookInstanceLifecycleConfig:
+    Type: "AWS::SageMaker::NotebookInstanceLifecycleConfig"
+    Properties:
+      OnStart:
+        - Content:
+            Fn::Base64: |
+              #!/bin/bash
+              sudo -u ec2-user -i <<'EOF'
+              source /home/ec2-user/anaconda3/bin/activate pytorch_latest_p36
+              pip install --upgrade pymongo
+              source /home/ec2-user/anaconda3/bin/deactivate
+              cd /home/ec2-user/SageMaker
+              wget https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem
+              EOF
+
+Outputs:
+  StackName:
+    Value: !Sub ${AWS::StackName}
+  VpcId:
+    Value: !Ref VPC
+  PrivateSubnetOne:
+    Value: !Ref PrivateSubnetOne
+  PrivateSubnetTwo:
+    Value: !Ref PrivateSubnetTwo
+  PrivateSubnetThree:
+    Value: !Ref PrivateSubnetThree
+  PublicSubnetOne:
+    Value: !Ref PublicSubnetOne
+  NATSubnet:
+    Value: !Ref NATSubnet
+  DocumentDBClusterName:
+    Value: !Ref DocumentDBCluster
+  DocumentDBCluster:
+    Value: !GetAtt DocumentDBCluster.Endpoint
+  DocDBSecret:
+    Value: !Ref DocDBSecret
+  SageMakerRole:
+    Value: !Ref SageMakerRole
+  SageMakerNotebookInstance:
+    Value: !Ref SageMakerNotebookInstance
+  SageMakerNotebookInstanceLifecycleConfig:
+    Value: !Ref SageMakerNotebookInstanceLifecycleConfig
