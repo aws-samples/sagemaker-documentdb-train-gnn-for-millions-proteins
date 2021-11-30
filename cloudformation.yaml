@@ -382,7 +382,8 @@ Resources:
               #!/bin/bash
               sudo -u ec2-user -i <<'EOF'
               source /home/ec2-user/anaconda3/bin/activate pytorch_latest_p36
-              pip install --upgrade pymongo
+              pip install biopython==1.79 pymongo==3.12.1
+              pip install dgl -f https://data.dgl.ai/wheels/repo.html
               source /home/ec2-user/anaconda3/bin/deactivate
               cd /home/ec2-user/SageMaker
               git clone https://github.com/aws-samples/sagemaker-documentdb-train-gnn-for-millions-proteins.git
